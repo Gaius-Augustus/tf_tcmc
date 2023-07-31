@@ -17,6 +17,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                     generator_regularizer,
                     activity_regularizer,
                     sparse_rates,
+                    num_positions, 
                     **kwargs):
         
         super(TCMCProbability, self).__init__(
@@ -29,7 +30,8 @@ class TCMCProbability(tf.keras.layers.Layer):
         self.stationary_distribution_initializer = tf.keras.initializers.get(stationary_distribution_initializer)
         self.rates_initializer = tf.keras.initializers.get(rates_initializer)
         self.generator_regularizer = tf.keras.regularizers.get(generator_regularizer)
-        self.sparse_rates = sparse_rates 
+        self.sparse_rates = sparse_rates
+        self.num_positions = num_positions  
     
 
     def __init__(self,
@@ -41,6 +43,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                  generator_regularizer=None,
                  activity_regularizer=None,                 
                  sparse_rates=False,
+                 num_positions=None,   
                  **kwargs):
         
         if not 'dtype' in kwargs:
@@ -53,6 +56,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                          generator_regularizer,
                          activity_regularizer,
                          sparse_rates,
+                         num_positions,  
                          **kwargs)
         self.__parse_forest(forest)
         
@@ -107,15 +111,16 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         s = input_shape[-1]
         self.alphabet_size = s
-
         M = np.prod(self.model_shape)
-        
+        k = 1 if self.num_positions == None else self.num_positions  
+
         rates_initializer = self.rates_initializer if self.rates_initializer != None else tf.initializers.RandomUniform(minval=-1, maxval=1)
-        stationary_distribution_initializer = self.stationary_distribution_initializer if self.stationary_distribution_initializer != None else tf.initializers.constant(1.0 / (np.sqrt(s) - 1))
+        stationary_distribution_initializer = self.stationary_distribution_initializer \
+            if self.stationary_distribution_initializer != None else tf.initializers.constant(1.0 / (np.sqrt(s) - 1))
         
         if not self.sparse_rates:
             # The parameters that we want to learn
-            self.R_inv = self.add_weight(shape = (M, int(s*(s-1)/2)), name = "R_inv", dtype = tf.float64,
+            self.R_inv = self.add_weight(shape = (M, k, int(s*(s-1)/2)), name = "R_inv", dtype = tf.float64,
                                          initializer = rates_initializer)
         else:
             # currently for dna (4) and amino acids (20) alphabets only
@@ -133,12 +138,12 @@ class TCMCProbability(tf.keras.layers.Layer):
                 raise ValueError(f"Currently we support dna (4) and amino acids (20) alphabets only for the sparse rates parameter. This means, that\
  your input alphabet size s (s={s}) must be 4**t (dna) or 20**t (amino acids) for tuple length t with {max_tuple_length} >= t >= {min_tuple_length}.")
 
-            self.R_inv = self.add_weight(shape = (M, int((u-1)*tuple_length*s/2)), name = "R_inv", dtype = tf.float64,
+            self.R_inv = self.add_weight(shape = (M, k, int((u-1)*tuple_length*s/2)), name = "R_inv", dtype = tf.float64,
                                          initializer = rates_initializer)
             
         # we use the inverse of stereographic projection to get a probability vector
         #kernel_init = tf.initializers.constant(1.0 / (np.sqrt(s) - 1)) # this initializes pi with uniform distribution
-        self.pi_inv = self.add_weight(shape=(M, s-1), name = "pi_inv", dtype = tf.float64,
+        self.pi_inv = self.add_weight(shape=(M, k, s-1), name = "pi_inv", dtype = tf.float64,
                                       initializer = stationary_distribution_initializer)
         
         self.lengths = self.add_weight(shape=(len(self._initial_lengths)), name='lengths', dtype=tf.float64,
@@ -153,18 +158,17 @@ class TCMCProbability(tf.keras.layers.Layer):
 
 
     @tf.function(input_signature=(
-        tf.TensorSpec(shape=[None,None,None], dtype=tf.float64, name='leave_configuration'),
+        tf.TensorSpec(shape=[None,None,None], dtype=tf.float64, name='leaf_configuration'),  # shape = (B,N,s)
         tf.TensorSpec(shape=[None,], dtype=tf.int32, name='tree_indices'),
     ))
-    def call(self, leave_configuration, tree_indices):
+    def call(self, leaf_configuration, tree_indices):
         # define local variable names
         s = self.alphabet_size
         M = np.prod(self.model_shape)
+        k = 1 if self.num_positions == None else self.num_positions 
         
         with tf.name_scope("batch_size"):
-            B = tf.shape(leave_configuration)[0]
-
-
+            B = tf.shape(leaf_configuration)[0]
 
         # gather some characteristic numbers of the forest
         
@@ -201,7 +205,6 @@ class TCMCProbability(tf.keras.layers.Layer):
         
         pi_inv = self.pi_inv
         R_inv = self.R_inv
-        
 
         with tf.name_scope("pi"):
             # map `pi_inv` to a probability vector: stationary_propabilities
@@ -216,21 +219,27 @@ class TCMCProbability(tf.keras.layers.Layer):
             Q = math.generator(R, pi, sparse_rates = self.sparse_rates)
             
         with tf.name_scope("P"):
-            P = tf.linalg.expm(lengths[:, None, None, None] * Q[None, ...])
+            # matrix exponential of Q multiplied with the branch lengths
+            P = tf.linalg.expm(lengths[:, None, None, None, None] * Q[None, ...]) # shape = (len(lengths),M,k,s,s)
             
 
         with tf.name_scope("alpha_leaves"):
+            # init alpha and add alpha for leaves
             alpha = [None] * (max_nodes)
-            alpha[:N] = [tf.tile(leave_configuration[:,None,i,...], [1,M] + ([1] * (len(leave_configuration.shape)-2))) for i in range(N)]
-
+            alpha[:N] = [tf.tile(leaf_configuration[:,None,i,...], [1,M] + ([1] * (len(leaf_configuration.shape)-2))) for i in range(N)]
+            # each alpha has shape (B,M,s)
+            
         with tf.name_scope("batch_slices"):
+            # partition batch indices (indices of columns of the MSAs) by tree id
             t = tree_indices
             batch_indices = tf.dynamic_partition(tf.range(B), t, F)
             batch_slices = [bi[:,None] for bi in batch_indices]
+            # batch_slices[tree_id] is a list of column indices beloging to tree tree_id
 
 
         for v in edge_indices_by_node_index:
 
+            # calculate alpha for inner nodes v
             with tf.name_scope(f"alpha_{v}"):
 
                 edge_indices = edge_indices_by_node_index[v]
@@ -238,21 +247,27 @@ class TCMCProbability(tf.keras.layers.Layer):
                 alpha_v = [[] for tree in range(F)]
                 tree_encountered = [0] * F
 
+                # loop over outgoing edges / daughter nodes
                 for edge_index in edge_indices:
 
                     (v, w, tree_id) = self._edges[edge_index]
 
                     tree_encountered[tree_id] = tree_encountered[tree_id] + 1
 
+                    b = len(batch_slices[tree_id]) # number of MSA columns belonging to tree tree_id
 
                     with tf.name_scope(f'alpha_{w}--{tree_id}{"" if v != w else "--copy"}'):
-                        alpha_daughter = tf.gather_nd(alpha[w], batch_slices[tree_id])
+                        # get alphas of daughter nodes 
+                        alpha_daughter = tf.gather_nd(alpha[w], batch_slices[tree_id]) # shape = (b,M,s)
 
                     with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
-                        P_e = P[edge_index,...]
-
+                        P_e = P[edge_index,...]  # shape = (M,k,s,s)
+                        # assumption: b is divisible by k
+                        # for k>1 this means every k positions a new sequence begins  
+                        P_e = tf.tile(P_e, [1, int(b/k), 1, 1]) # shape = (M,b,s,s)
+                        
                     with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
-                        alpha_e = tf.einsum("mcd,imd -> imc", P_e, alpha_daughter)
+                        alpha_e = tf.einsum("micd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
 
                     alpha_v[tree_id].append(alpha_e)
 
@@ -265,19 +280,22 @@ class TCMCProbability(tf.keras.layers.Layer):
                 with tf.name_scope(f"construct_alpha_{v}_from_all_alpha_e"):
                     alpha[v] = tf.tensor_scatter_nd_update(tf.ones((B,M,s),dtype=tf.dtypes.float64),update_indices, alpha_v)
 
-        
+        # calculate alphas for roots
         with tf.name_scope("alpha_roots"):
             alpha_root = tf.concat([ tf.gather_nd(alpha[num_nodes[tree_id]-1], batch_slices[tree_id]) for tree_id in range(F) ], axis=0)
             update_indices = tf.concat(batch_slices, axis=0)
             alpha_root = tf.scatter_nd(update_indices, alpha_root, shape=tf.shape(alpha[0]))
 
+        # calculate tree probability
         with tf.name_scope(f"probability_of_data_given_model"):
-            P_leave_configuration = tf.einsum("imc, mc -> im", alpha_root, pi)
+            # assumption for k>1: B is divisible by k
+            pi_ = tf.tile(pi, [1, int(B/k), 1])  # shape = (M,B,s)  
+            P_leaf_configuration = tf.einsum("imc, mic -> im", alpha_root, pi_) # shape = (B,M)
 
         with tf.name_scope("reshape_to_output_shape"):
             output_shape = (B,*self.model_shape)
-            result = tf.reshape(P_leave_configuration, output_shape)
-            
+            result = tf.reshape(P_leaf_configuration, output_shape)
+                        
         return result
     
     
@@ -365,6 +383,7 @@ class TCMCProbability(tf.keras.layers.Layer):
     def get_config(self):
         base_config = super(TCMCProbability, self).get_config()
         base_config['model_shape'] = self.model_shape
+        base_config['num_positions'] = self.num_positions
         base_config['leaves'] = self._leaves
         base_config['initial_lengths'] = self._initial_lengths
         base_config['edges'] = self._edges
