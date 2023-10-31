@@ -74,7 +74,7 @@ def expected_transitions(generator, stationary_distribution):
     pi = stationary_distribution
     
     expected_transitions = tf.reduce_sum(tf.multiply(pi, gen_diag),
-                                         axis = 2, name = "expected_transitions")   #### axis = 1
+                                         axis = 2, name = "expected_transitions")
     
     return expected_transitions
     
