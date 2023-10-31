@@ -260,14 +260,22 @@ class TCMCProbability(tf.keras.layers.Layer):
                         # get alphas of daughter nodes 
                         alpha_daughter = tf.gather_nd(alpha[w], batch_slices[tree_id]) # shape = (b,M,s)
 
-                    with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
-                        P_e = P[edge_index,...]  # shape = (M,k,s,s)
-                        # assumption: b is divisible by k
-                        # for k>1 this means every k positions a new sequence begins  
-                        P_e = tf.tile(P_e, [1, int(b/k), 1, 1]) # shape = (M,b,s,s)
-                        
-                    with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
-                        alpha_e = tf.einsum("micd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
+                    # divide step into cases k>1 and k=1 for runtime and memory reasons
+                    if k > 1:
+                        with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
+                            # assumption: b is divisible by k
+                            # this means every k positions a new sequence begins
+                            P_e = tf.tile(P[edge_index,...], [1, int(b/k), 1, 1]) # shape = (M,b,s,s)
+
+                        with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
+                            alpha_e = tf.einsum("micd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
+                            
+                    else:
+                        with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
+                            P_e = P[edge_index,:,0,...] # shape = (M,s,s)
+
+                        with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
+                            alpha_e = tf.einsum("mcd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
 
                     alpha_v[tree_id].append(alpha_e)
 
@@ -288,9 +296,13 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         # calculate tree probability
         with tf.name_scope(f"probability_of_data_given_model"):
-            # assumption for k>1: B is divisible by k
-            pi_ = tf.tile(pi, [1, int(B/k), 1])  # shape = (M,B,s)  
-            P_leaf_configuration = tf.einsum("imc, mic -> im", alpha_root, pi_) # shape = (B,M)
+            if k > 1:
+                # assumption for k>1: B is divisible by k
+                pi_ = tf.tile(pi, [1, int(B/k), 1])  # shape = (M,B,s)
+                P_leaf_configuration = tf.einsum("imc, mic -> im", alpha_root, pi_) # shape = (B,M)
+            else:
+                pi_ = pi[:,0,...] # shape = (M,s)
+                P_leaf_configuration = tf.einsum("imc, mc -> im", alpha_root, pi_)  # shape = (B,M)
 
         with tf.name_scope("reshape_to_output_shape"):
             output_shape = (B,*self.model_shape)
