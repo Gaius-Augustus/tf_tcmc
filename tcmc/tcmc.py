@@ -254,31 +254,22 @@ class TCMCProbability(tf.keras.layers.Layer):
 
                     tree_encountered[tree_id] = tree_encountered[tree_id] + 1
 
-                    b = len(batch_slices[tree_id]) # number of MSA columns belonging to tree tree_id
+                    # b = len(batch_slices[tree_id]) = number of MSA columns belonging to tree tree_id
 
                     with tf.name_scope(f'alpha_{w}--{tree_id}{"" if v != w else "--copy"}'):
-                        # get alphas of daughter nodes 
-                        alpha_daughter = tf.gather_nd(alpha[w], batch_slices[tree_id]) # shape = (b,M,s)
+                        # get alphas of daughter nodes and reshape for einsum
+                        alpha_daughter = tf.reshape(tf.gather_nd(alpha[w], batch_slices[tree_id]), (-1,k,M,s)) # shape = (b/k,k,M,s)
 
-                    # divide step into cases k>1 and k=1 for runtime and memory reasons
-                    if k > 1:
-                        with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
-                            # assumption: b is divisible by k
-                            # this means every k positions a new sequence begins
-                            P_e = tf.tile(P[edge_index,...], [1, int(b/k), 1, 1]) # shape = (M,b,s,s)
+                    with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
+                        P_e = P[edge_index,...]  # shape = (M,k,s,s)
 
-                        with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
-                            alpha_e = tf.einsum("micd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
-                            
-                    else:
-                        with tf.name_scope(f"P_{v}--{w}--{tree_id}"):
-                            P_e = P[edge_index,:,0,...] # shape = (M,s,s)
-
-                        with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
-                            alpha_e = tf.einsum("mcd,imd -> imc", P_e, alpha_daughter) # shape = (b,M,s)
+                    with tf.name_scope(f'alpha_{v}--{w}--{tree_id}'):
+                        # calculate alpha for edge (v,w), reshape to original alpha shape
+                        alpha_e = tf.reshape(tf.einsum("mkcd,ikmd -> ikmc", P_e, alpha_daughter), (-1,M,s))  # shape = (b,M,s)
 
                     alpha_v[tree_id].append(alpha_e)
 
+                # construct alpha v
                 with tf.name_scope("pointwise_multiply_alpha_e"):
                     alpha_v = tf.concat([tf.math.reduce_prod(tf.stack(alpha_v[i]), axis=0) for i in range(F) if tree_encountered[i] > 0], axis=0)
 
@@ -292,17 +283,11 @@ class TCMCProbability(tf.keras.layers.Layer):
         with tf.name_scope("alpha_roots"):
             alpha_root = tf.concat([ tf.gather_nd(alpha[num_nodes[tree_id]-1], batch_slices[tree_id]) for tree_id in range(F) ], axis=0)
             update_indices = tf.concat(batch_slices, axis=0)
-            alpha_root = tf.scatter_nd(update_indices, alpha_root, shape=tf.shape(alpha[0]))
+            alpha_root = tf.reshape(tf.scatter_nd(update_indices, alpha_root, shape=tf.shape(alpha[0])), (-1,k,M,s))  # shape = (B/k,k,M,s)
 
         # calculate tree probability
         with tf.name_scope(f"probability_of_data_given_model"):
-            if k > 1:
-                # assumption for k>1: B is divisible by k
-                pi_ = tf.tile(pi, [1, int(B/k), 1])  # shape = (M,B,s)
-                P_leaf_configuration = tf.einsum("imc, mic -> im", alpha_root, pi_) # shape = (B,M)
-            else:
-                pi_ = pi[:,0,...] # shape = (M,s)
-                P_leaf_configuration = tf.einsum("imc, mc -> im", alpha_root, pi_)  # shape = (B,M)
+            P_leaf_configuration = tf.einsum("ikmc, mkc -> ikm", alpha_root, pi) # shape = (B/k,k,M)
 
         with tf.name_scope("reshape_to_output_shape"):
             output_shape = (B,*self.model_shape)
