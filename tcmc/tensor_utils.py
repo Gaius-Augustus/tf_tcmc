@@ -121,12 +121,13 @@ def batched_segment_indices(segment_lengths):
     
     return tf.stack((seg_ids, batch_indices), axis=1)
 
-def sparse_rate_matrix(M, s):
+def sparse_rate_matrix(M, k, s):
     """
     Returns indices for the upper triangle rate matrix. Allowed are only transitions with at most one mutation per tuple.
 
     Args:
         M (int): Number of models
+        k (int): Number of positions, 1 in homogeneous model
         s (int): size of the alphabet
 
     Returns:
@@ -160,18 +161,20 @@ def sparse_rate_matrix(M, s):
             return True
         return False
 
-    iupper = [[] for i in range(M)]
-    iupper_const = [[] for i in range(M)]
+    iupper = [[[] for pos in range(k)] for i in range(M)]
+    iupper_const = [[[] for pos in range(k)] for i in range(M)]
     
     for i, a1 in enumerate(tuples):
         for j, a2 in enumerate(tuples):
             if i < j:
                 if mutation(a1, a2):
                     for m in range(M):
-                        iupper[m].append([m, i, j])
+                        for pos in range(k):
+                            iupper[m][pos].append([m, pos, i, j])
                 else:
                     for m in range(M):
-                        iupper_const[m].append([m, i, j])    
+                        for pos in range(k):
+                            iupper_const[m][pos].append([m, pos, i, j])    
 
     iupperM = tf.convert_to_tensor(iupper, dtype=tf.int64)
     iupperM_const = tf.convert_to_tensor(iupper_const, dtype=tf.int64)
