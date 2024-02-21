@@ -17,6 +17,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                     generator_regularizer,
                     activity_regularizer,
                     sparse_rates,
+                    normalize_expected_mutations,
                     **kwargs):
         
         super(TCMCProbability, self).__init__(
@@ -30,7 +31,7 @@ class TCMCProbability(tf.keras.layers.Layer):
         self.rates_initializer = tf.keras.initializers.get(rates_initializer)
         self.generator_regularizer = tf.keras.regularizers.get(generator_regularizer)
         self.sparse_rates = sparse_rates 
-    
+        self.normalize_expected_mutations = normalize_expected_mutations
 
     def __init__(self,
                  model_shape,
@@ -41,6 +42,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                  generator_regularizer=None,
                  activity_regularizer=None,                 
                  sparse_rates=False,
+                 normalize_expected_mutations=False,
                  **kwargs):
         
         if not 'dtype' in kwargs:
@@ -53,6 +55,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                          generator_regularizer,
                          activity_regularizer,
                          sparse_rates,
+                         normalize_expected_mutations,
                          **kwargs)
         self.__parse_forest(forest)
         
@@ -110,7 +113,7 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         M = np.prod(self.model_shape)
         
-        rates_initializer = self.rates_initializer if self.rates_initializer != None else tf.initializers.RandomUniform(minval=-1, maxval=1)
+        rates_initializer = self.rates_initializer if self.rates_initializer != None else tf.initializers.RandomUniform(minval=-.1, maxval=0.1) # -1, 1
         stationary_distribution_initializer = self.stationary_distribution_initializer if self.stationary_distribution_initializer != None else tf.initializers.constant(1.0 / (np.sqrt(s) - 1))
         
         if not self.sparse_rates:
@@ -145,7 +148,8 @@ class TCMCProbability(tf.keras.layers.Layer):
                                       initializer = tf.constant_initializer(value=self._initial_lengths),
                                       trainable=self.should_train_lengths)
         # scaling: model specific mutation rates
-        #self.rho = self.add_weight(shape = M, name = "rho", dtype = tf.float64, initializer = tf.initializers.constant(1.0))
+        # not used anymore, use normalize_expected_mutations=False instead
+        # self.rho = self.add_weight(shape = M, name = "rho", dtype = tf.float64, initializer = tf.initializers.constant(1.0))
 
 
 
@@ -213,7 +217,7 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         # construct the transition rate matrices
         with tf.name_scope("Q"):
-            Q = math.generator(R, pi, sparse_rates = self.sparse_rates)
+            Q = math.generator(R, pi, should_normalize_expected_mutations=self.normalize_expected_mutations, sparse_rates = self.sparse_rates)
             
         with tf.name_scope("P"):
             P = tf.linalg.expm(lengths[:, None, None, None] * Q[None, ...])
