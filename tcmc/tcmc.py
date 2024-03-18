@@ -145,7 +145,7 @@ class TCMCProbability(tf.keras.layers.Layer):
         self.pi_inv = self.add_weight(shape=(M, s-1), name = "pi_inv", dtype = tf.float64,
                                       initializer = stationary_distribution_initializer)
         
-        self.lengths = self.add_weight(shape=(len(self._initial_lengths)), name='lengths', dtype=tf.float64,
+        self.lengths = self.add_weight(shape=(len(self._initial_lengths),), name='lengths', dtype=tf.float64,
                                       initializer = tf.constant_initializer(value=self._initial_lengths),
                                       trainable=self.should_train_lengths)
         # scaling: model specific mutation rates
