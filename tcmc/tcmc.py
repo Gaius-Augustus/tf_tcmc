@@ -209,7 +209,11 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         with tf.name_scope("pi"):
             # map `pi_inv` to a probability vector: stationary_propabilities
-            pi = math.inv_stereographic_projection(pi_inv) ** 2 # pi sums up to 1
+            # the following line became necessary with TensorFlow 2.16.1
+            # as pi_inv was a KerasVariable and an implicit numpy conversion
+            # was leading to an error
+            pi_inv_tensor = tf.convert_to_tensor(pi_inv)
+            pi = tf.math.square(math.inv_stereographic_projection(pi_inv_tensor)) # pi sums up to 1
 
         with tf.name_scope("R"):
             # map real numbers to positve real numbers

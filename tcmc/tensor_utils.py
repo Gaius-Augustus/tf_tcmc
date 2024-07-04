@@ -3,7 +3,7 @@ import tensorflow as tf
 import itertools
 
 def crosscat_matrices(A,B):
-    """Concat the rows matrices A,B in a crossproducty way.
+    r"""Concat the rows matrices A,B in a crossproducty way.
     
     More precisely, given :math:`A \in \mathbb{R}^{n \times k}`, 
     :math:`B \in \mathbb{R}^{m \times l}` the resulting matrix 

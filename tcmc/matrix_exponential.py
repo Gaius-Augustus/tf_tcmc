@@ -10,7 +10,7 @@ import tensorflow as tf
 
 @tf.function
 def _matrix_exp_pade3(A):
-    """3rd-order Pade approximant for matrix exponential.
+    r"""3rd-order Pade approximant for matrix exponential.
         Given a matrix :math:`A \in \mathcal{M}(n \times n)` consider
         :math `r_m(A) \¢oloneqq r_{mm}(A) = \frac{p_{m}}{q_{m}}` the order :math:`n`
         Pade approximation to the matrix exponential :math:`\text{exp}(A)`.
@@ -24,7 +24,7 @@ def _matrix_exp_pade3(A):
         This function calculates the matrices :math: `U, V  \in \mathcal{M}(n \times n)` and
         returns them.
         One can then obtain :math:`r_{2m+1}(A)` by solving :math:`(-U+V)r_{2m+1}(A) = U+V`.
-        By the discussion in Hig05 for IEEE double precision :math:`2m+1 \in \{3,5,7,9,13}` suffices.
+        By the discussion in Hig05 for IEEE double precision :math:`2m+1 in \{3,5,7,9,13}` suffices.
     """
     
     # coefficient vector of 3-rd order Pade approx.
