@@ -9,11 +9,11 @@ def stereographic_projection(x):
         y = x[...,:-1] / (1 - x_last)[...,None]
         return y
 
-@tf.function 
+@tf.function
 def inv_stereographic_projection(y):
     with tf.name_scope("inv_stereographic_projection"):
-        norm_square = tf.reduce_sum(y**2, axis=-1)
-        x = tf.concat([2 * y, (norm_square - 1)[...,None]], axis = -1) * (1 / (norm_square + 1))[...,None]
+        norm_square = tf.reduce_sum(y**2, axis=-1, keepdims=True)
+        x = tf.concat([2 * y, (norm_square - 1)], axis = -1) * (1 / (norm_square + 1))
         return x
 
 @tf.function

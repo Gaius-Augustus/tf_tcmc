@@ -18,6 +18,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                     activity_regularizer,
                     sparse_rates,
                     num_positions, 
+                    normalize_expected_mutations,
                     **kwargs):
         
         super(TCMCProbability, self).__init__(
@@ -32,7 +33,7 @@ class TCMCProbability(tf.keras.layers.Layer):
         self.generator_regularizer = tf.keras.regularizers.get(generator_regularizer)
         self.sparse_rates = sparse_rates
         self.num_positions = num_positions  
-    
+        self.normalize_expected_mutations = normalize_expected_mutations
 
     def __init__(self,
                  model_shape,
@@ -44,6 +45,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                  activity_regularizer=None,                 
                  sparse_rates=False,
                  num_positions=None,   
+                 normalize_expected_mutations=False,
                  **kwargs):
         
         if not 'dtype' in kwargs:
@@ -57,6 +59,7 @@ class TCMCProbability(tf.keras.layers.Layer):
                          activity_regularizer,
                          sparse_rates,
                          num_positions,  
+                         normalize_expected_mutations,
                          **kwargs)
         self.__parse_forest(forest)
         
@@ -114,10 +117,10 @@ class TCMCProbability(tf.keras.layers.Layer):
         M = np.prod(self.model_shape)
         k = 1 if self.num_positions == None else self.num_positions  
 
-        rates_initializer = self.rates_initializer if self.rates_initializer != None else tf.initializers.RandomUniform(minval=-1, maxval=1)
+        rates_initializer = self.rates_initializer if self.rates_initializer != None else tf.initializers.RandomUniform(minval=-.1, maxval=0.1) # -1, 1
         stationary_distribution_initializer = self.stationary_distribution_initializer \
             if self.stationary_distribution_initializer != None else tf.initializers.constant(1.0 / (np.sqrt(s) - 1))
-        
+                
         if not self.sparse_rates:
             # The parameters that we want to learn
             self.R_inv = self.add_weight(shape = (M, k, int(s*(s-1)/2)), name = "R_inv", dtype = tf.float64,
@@ -150,7 +153,8 @@ class TCMCProbability(tf.keras.layers.Layer):
                                       initializer = tf.constant_initializer(value=self._initial_lengths),
                                       trainable=self.should_train_lengths)
         # scaling: model specific mutation rates
-        #self.rho = self.add_weight(shape = M, name = "rho", dtype = tf.float64, initializer = tf.initializers.constant(1.0))
+        # not used anymore, use normalize_expected_mutations=False instead
+        # self.rho = self.add_weight(shape = M, name = "rho", dtype = tf.float64, initializer = tf.initializers.constant(1.0))
 
 
 
@@ -208,7 +212,11 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         with tf.name_scope("pi"):
             # map `pi_inv` to a probability vector: stationary_propabilities
-            pi = math.inv_stereographic_projection(pi_inv) ** 2 # pi sums up to 1
+            # the following line became necessary with TensorFlow 2.16.1
+            # as pi_inv was a KerasVariable and an implicit numpy conversion
+            # was leading to an error
+            pi_inv_tensor = tf.convert_to_tensor(pi_inv)
+            pi = tf.math.square(math.inv_stereographic_projection(pi_inv_tensor)) # pi sums up to 1
 
         with tf.name_scope("R"):
             # map real numbers to positve real numbers
@@ -216,7 +224,7 @@ class TCMCProbability(tf.keras.layers.Layer):
 
         # construct the transition rate matrices
         with tf.name_scope("Q"):
-            Q = math.generator(R, pi, sparse_rates = self.sparse_rates)
+            Q = math.generator(R, pi, should_normalize_expected_mutations=self.normalize_expected_mutations, sparse_rates = self.sparse_rates)
             
         with tf.name_scope("P"):
             # matrix exponential of Q multiplied with the branch lengths
