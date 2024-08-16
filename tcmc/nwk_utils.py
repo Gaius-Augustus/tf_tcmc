@@ -1,3 +1,4 @@
+import os
 import newick as nwk
 import numpy as np
 import regex as re
@@ -133,7 +134,7 @@ def nwk_read(nwk_filename, return_variable_configuration=True):
         Reads a Newick string and processes its first tree.
 
         Args:
-            nwk_filename (str): Path to the wanted Newick file
+            nwk_filename (str): Path to the wanted Newick file, or a Newick string
             return_variable_configuration (bool): Whether the original length in the file or a transformation matrix should be returned
 
         Returns:
@@ -149,9 +150,16 @@ def nwk_read(nwk_filename, return_variable_configuration=True):
     """
     if isinstance(nwk_filename, StringIO):
         nwk_string = nwk_filename.read()
-    else: 
-        with open(nwk_filename, 'r') as file:
-            nwk_string = file.read()
+        
+    elif isinstance(nwk_filename, str):
+        if os.path.isfile(nwk_filename):
+            with open(nwk_filename, 'r') as file:
+                nwk_string = file.read()
+        else:
+            nwk_string = nwk_filename
+    
+    else:
+        raise TypeError(f"Unsupported type for Newick tree: {type(nwk_filename).__name__}. Supported types are: {', '.join(t.__name__ for t in (str, StringIO))}.")
             
     return nwk_reads(nwk_string, return_variable_configuration)
     
